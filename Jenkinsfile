@@ -1,90 +1,89 @@
 pipeline {
-    agent any
+	options {
+		buildDiscarder(logRotator(numToKeepStr:'300'))
+	}
+	parameters {
+		choice(
+			choices: 'package\ninstall\ndeply',
+            description: 'maven goal',
+            name: 'GOAL')
+		
+		choice(
+			choices: 'dev_hbo\nhbo/qa\ndeply\nhbo/loadtest\nhbo/prod\nrefs/tags/hbo_release',
+            description: 'git branch name',
+            name: 'BRANCH')
+	}
+	environment {
+		JOB_NAME = ''
+		BUILD_URL = ''
+		BUILD_NUMBER = ''
+	}
+	
+	tools {
     
-    environment {
-            
-        BRANCH_NAME = ''
-    
-    }
-    options {
-       buildDiscarder(
-           logRotator(
-               daysToKeepStr: '90'
-           )
-       )
-    }
-    stages {
-        stage('checkout') {
+    maven "maven3.2.2"
+    jdk "jdk8"
+  }
+  
+  stages {
+		
+		stage ('Initialize') {
             steps {
-                deleteDir()
+                sh '''
+                    echo "PATH = ${PATH}"
+                    echo "M2_HOME = ${M2_HOME}"
+                ''' 
+				
+				hipchatSend (color: 'YELLOW', notify: true,
+					message: "STARTED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})"
+          )
             }
         }
+		
         stage('Build') {
             steps {
-                if (env.BRANCH_NAME == 'master') {
+                
+                sh '''
+                    rm -rf ~/.m2/repository/net/malbam/services/registration
                     
-                    hipchatSend (color: 'YELLOW', notify: true,
-                    message: "STARTED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})"
-                   
-                    def job = build job: 'userservice-registration', 
-                    parameters: 
-                    [
-                     [
-                        $class: 'StringParameterValue', 
-                        name: 'GOAL', value: 'install'
-                        name: 'BRANCH', value: 'dev_hbo'
-                    ]
-                   ]
-                }
-                
+                '''
             }
-        }
+			
+			steps {
+				sh '''
+					mvn clean 
+					${params.GOAL} 
+					--global-settings=settings.xml 
+					-s setting.xml
+					-Dmaven.test.skip=true
+					-U
+					-pl
+					registration-common,business
+					
+					''' 
+            }
             
-        steps {
-                
-                sh '''export PATH=$PATH:/opt/activator-1.3.0
-                rm -rf ~/.ivy2/cache/net.malbam.services.registration.mysql
-                rm -rf ~/.m2/repository/net/malbam/shared/appcache
-                rm -rf ${WORKSPACE}/target
-                activator clean
-                activator stage '''
+			
         }
-        
-        steps{
-                
-                def job = build job: 'Bamzon-Generic-RPM-Builder', 
-                        parameters: 
-                         [
-                             [
-                                $class: 'StringParameterValue', 
-                                name: 'buildRoot', value: '${WORKSPACE}/target/universal/stage',
-                                name: 'rpmUser', value: 'root'
-                                name: 'prefixPath', value: '/usr/share/userservices'
-                                name: 'rpmDescription', value: 'User service Dev Build',
-                                name: 'buildTarget', value: '',
-                                name: 'bucket_path', value: 'dev/skynet'
-                             ]
-                         ]
-            }
-        }
-        
-    stage('') {
-                steps {
-               
-            }
-        }
- }
-post {
-    success {
+	}
+  
+  post {
+    always {
+      deleteDir()
+    }
+	
+	success {
       hipchatSend (color: 'GREEN', notify: true,
           message: "SUCCESSFUL: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})"
         )
-    }
+	}
 
     failure {
-         hipchatSend (color: 'RED', notify: true,
-          message: "FAILURE: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})"
+      hipchatSend (color: 'RED', notify: true,
+          message: "FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})"
         )
-        }
-    }
+	}
+    
+  }
+
 }
